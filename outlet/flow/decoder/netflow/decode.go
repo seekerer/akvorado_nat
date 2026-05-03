@@ -123,6 +123,12 @@ func (nd *Decoder) decodeRecord(version uint16, obsDomainID uint32, tao *templat
 		var proto, icmpType, icmpCode uint8
 		var foundIcmpTypeCode bool
 		var decapOK bool
+		// postNATSrcIP and postNATDstIP hold the post-NAT addresses exported by
+		// MikroTik (IPFIX IEs 225/226). When these contain a private/LAN address
+		// they represent the original LAN IP before tunnelling, and we override
+		// SrcAddr/DstAddr so that flows show the real LAN host rather than the
+		// tunnel endpoint.
+		var postNATSrcIP, postNATDstIP netip.Addr
 		mplsLabels := make([]uint32, 0, 5)
 		for _, field := range fields {
 			v, ok := field.Value.([]byte)
@@ -286,13 +292,24 @@ func (nd *Decoder) decodeRecord(version uint16, obsDomainID uint32, tao *templat
 					}
 				}
 
+				// NAT: always capture postNAT IPs for MikroTik LAN-IP override,
+				// and append to schema columns only when the NAT column group is enabled.
+				switch field.Type {
+				case netflow.IPFIX_FIELD_postNATSourceIPv4Address:
+					ip := decoder.DecodeIP(v)
+					postNATSrcIP = ip
+					if !nd.d.Schema.IsDisabled(schema.ColumnGroupNAT) {
+						bf.AppendIPv6(schema.ColumnSrcAddrNAT, ip)
+					}
+				case netflow.IPFIX_FIELD_postNATDestinationIPv4Address:
+					ip := decoder.DecodeIP(v)
+					postNATDstIP = ip
+					if !nd.d.Schema.IsDisabled(schema.ColumnGroupNAT) {
+						bf.AppendIPv6(schema.ColumnDstAddrNAT, ip)
+					}
+				}
 				if !nd.d.Schema.IsDisabled(schema.ColumnGroupNAT) {
-					// NAT
 					switch field.Type {
-					case netflow.IPFIX_FIELD_postNATSourceIPv4Address:
-						bf.AppendIPv6(schema.ColumnSrcAddrNAT, decoder.DecodeIP(v))
-					case netflow.IPFIX_FIELD_postNATDestinationIPv4Address:
-						bf.AppendIPv6(schema.ColumnDstAddrNAT, decoder.DecodeIP(v))
 					case netflow.IPFIX_FIELD_postNAPTSourceTransportPort:
 						bf.AppendUint(schema.ColumnSrcPortNAT, decodeUNumber(v))
 					case netflow.IPFIX_FIELD_postNAPTDestinationTransportPort:
@@ -349,6 +366,18 @@ func (nd *Decoder) decodeRecord(version uint16, obsDomainID uint32, tao *templat
 					}
 				}
 			}
+		}
+		// MikroTik NAT override: when a flow's SrcAddr/DstAddr is a public IP but
+		// the postNAT field carries a private/LAN address, the postNAT value
+		// represents the real LAN host behind the NAT/VPN tunnel. Override
+		// SrcAddr/DstAddr to show the actual LAN endpoint rather than the
+		// public-facing address. If the original address is already private
+		// (e.g. a real LAN client), leave it unchanged.
+		if isPrivateIP(postNATSrcIP) && !isPrivateIP(bf.SrcAddr) {
+			bf.SrcAddr = postNATSrcIP
+		}
+		if isPrivateIP(postNATDstIP) && !isPrivateIP(bf.DstAddr) {
+			bf.DstAddr = postNATDstIP
 		}
 		if !nd.d.Schema.IsDisabled(schema.ColumnGroupL3L4) && (proto == constants.ProtoICMPv4 || proto == constants.ProtoICMPv6) {
 			// ICMP
@@ -437,4 +466,11 @@ func decodeIPFromUint32(ipv4 uint32) netip.Addr {
 	var ipBytes [4]byte
 	binary.BigEndian.PutUint32(ipBytes[:], ipv4)
 	return netip.AddrFrom16(netip.AddrFrom4(ipBytes).As16())
+}
+
+// isPrivateIP reports whether addr is an RFC 1918 private (LAN) address.
+// It is used to decide whether a postNAT IP exported by MikroTik should
+// override the flow's SrcAddr/DstAddr.
+func isPrivateIP(addr netip.Addr) bool {
+	return addr.IsValid() && addr.IsPrivate()
 }
