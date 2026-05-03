@@ -367,16 +367,14 @@ func (nd *Decoder) decodeRecord(version uint16, obsDomainID uint32, tao *templat
 				}
 			}
 		}
-		// MikroTik NAT override: when a flow's SrcAddr/DstAddr is a public IP but
-		// the postNAT field carries a private/LAN address, the postNAT value
-		// represents the real LAN host behind the NAT/VPN tunnel. Override
-		// SrcAddr/DstAddr to show the actual LAN endpoint rather than the
-		// public-facing address. If the original address is already private
-		// (e.g. a real LAN client), leave it unchanged.
-		if isPrivateIP(postNATSrcIP) && !isPrivateIP(bf.SrcAddr) {
+		// MikroTik NAT override: postNAT fields carry the real LAN address of the
+		// host behind the VPN/NAT tunnel. When the postNAT IP is a private/internal
+		// address (RFC 1918, ULA, CGNAT, etc.) use it as SrcAddr/DstAddr so that
+		// flows show the actual LAN endpoint rather than the tunnel or translated IP.
+		if isPrivateIP(postNATSrcIP) {
 			bf.SrcAddr = postNATSrcIP
 		}
-		if isPrivateIP(postNATDstIP) && !isPrivateIP(bf.DstAddr) {
+		if isPrivateIP(postNATDstIP) {
 			bf.DstAddr = postNATDstIP
 		}
 		if !nd.d.Schema.IsDisabled(schema.ColumnGroupL3L4) && (proto == constants.ProtoICMPv4 || proto == constants.ProtoICMPv6) {
@@ -468,7 +466,8 @@ func decodeIPFromUint32(ipv4 uint32) netip.Addr {
 	return netip.AddrFrom16(netip.AddrFrom4(ipBytes).As16())
 }
 
-// isPrivateIP reports whether addr is an RFC 1918 private (LAN) address.
+// isPrivateIP reports whether addr is a private/internal address as defined by
+// netip.Addr.IsPrivate (RFC 1918, RFC 4193 ULA, RFC 6598 CGNAT) or loopback.
 // It is used to decide whether a postNAT IP exported by MikroTik should
 // override the flow's SrcAddr/DstAddr.
 func isPrivateIP(addr netip.Addr) bool {

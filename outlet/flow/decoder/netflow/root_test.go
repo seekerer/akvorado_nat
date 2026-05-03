@@ -758,8 +758,11 @@ func TestDecodeNAT(t *testing.T) {
 	expectedFlows := []*schema.FlowMessage{
 		{
 			ExporterAddress: netip.MustParseAddr("::ffff:127.0.0.1"),
-			SrcAddr:         netip.MustParseAddr("::ffff:172.16.100.198"),
-			DstAddr:         netip.MustParseAddr("::ffff:10.89.87.1"),
+			// postNATSourceIPv4Address (10.143.52.29) is private, so it overrides
+			// the original sourceIPv4Address (172.16.100.198) per the MikroTik
+			// NAT override logic.
+			SrcAddr: netip.MustParseAddr("::ffff:10.143.52.29"),
+			DstAddr: netip.MustParseAddr("::ffff:10.89.87.1"),
 			OtherColumns: map[schema.ColumnKey]any{
 				schema.ColumnSrcPort:    uint16(35303),
 				schema.ColumnDstPort:    uint16(53),

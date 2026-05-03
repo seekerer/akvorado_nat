@@ -1,0 +1,45 @@
+---
+name: Build Linux x64 binary
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - v*
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: 🐧 Build Linux x64 binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          # Full history is needed so `git describe` can produce a clean version string.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+
+      - name: Install system dependencies
+        run: sudo apt-get install -qqy shared-mime-info curl zip
+
+      - name: Build Linux amd64 binary
+        run: make TARGETARCH=amd64 TARGETOS=linux
+
+      - name: Rename binary
+        run: mv bin/akvorado bin/akvorado-linux-amd64
+
+      - name: Verify binary
+        run: ./bin/akvorado-linux-amd64 version
+
+      - name: Upload binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: akvorado-linux-amd64
+          path: bin/akvorado-linux-amd64
+          if-no-files-found: error
